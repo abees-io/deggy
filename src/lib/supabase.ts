@@ -4,6 +4,15 @@ import { Appointment } from '../types';
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
+// Service role key is only available server-side (no NEXT_PUBLIC_ prefix)
+// It bypasses RLS and is used for trusted server-side operations
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+// Check if the service key is a real key (not a placeholder)
+const hasValidServiceKey =
+  !!supabaseServiceKey &&
+  !supabaseServiceKey.includes('your-service-role-key');
+
 // Detect if keys are default placeholders or empty
 export const isMockDatabase =
   !supabaseUrl ||
@@ -11,10 +20,22 @@ export const isMockDatabase =
   supabaseUrl.includes('placeholder-url') ||
   supabaseAnonKey.includes('placeholder-anon-key');
 
-// Initialize the Supabase client
+// Public anon client — used for client-side auth (login, session checks)
 export const supabase = !isMockDatabase
   ? createClient(supabaseUrl, supabaseAnonKey)
   : null;
+
+// Admin client — uses service role key to bypass RLS for trusted server-side writes.
+// Only created when a real service key is provided, otherwise falls back to anon client.
+export const supabaseAdmin =
+  !isMockDatabase && hasValidServiceKey
+    ? createClient(supabaseUrl, supabaseServiceKey, {
+        auth: {
+          autoRefreshToken: false,
+          persistSession: false
+        }
+      })
+    : null;
 
 // Initial mockup appointments to seed the database
 const INITIAL_MOCK_APPOINTMENTS: Appointment[] = [
@@ -130,7 +151,9 @@ export const db = {
       return newAppointment;
     }
 
-    const { data, error } = await supabase!
+    // Use the admin client (service role) for inserts to bypass RLS
+    const client = supabaseAdmin || supabase!;
+    const { data, error } = await client
       .from('appointments')
       .insert([appointment])
       .select();
